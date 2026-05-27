@@ -1,0 +1,17 @@
+[Unit]
+Description=Lotto Max Weekly Prediction Service
+After=network.target
+
+[Service]
+Type=simple
+User=eva
+WorkingDirectory=/home/eva/workspace/My_lotto_project
+Environment="PATH=/home/eva/workspace/My_lotto_project/venv/bin"
+ExecStart=/home/eva/workspace/My_lotto_project/venv/bin/python /home/eva/workspace/My_lotto_project/scheduler.py --day friday --time 18:00
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
