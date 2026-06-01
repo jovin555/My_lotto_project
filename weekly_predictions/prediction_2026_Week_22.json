@@ -1,0 +1,21 @@
+{
+  "week": "2026_Week_22",
+  "date_generated": "2026-05-31T20:01:05.104578",
+  "main_numbers": [
+    4,
+    7,
+    15,
+    29,
+    30,
+    42,
+    43
+  ],
+  "bonus_number": 39,
+  "next_draw_date": "2026-06-01",
+  "statistics": {
+    "total_draws_analyzed": 2055,
+    "total_numbers_analyzed": 14385,
+    "mean": 25.052346193952033,
+    "median": 25.0
+  }
+}

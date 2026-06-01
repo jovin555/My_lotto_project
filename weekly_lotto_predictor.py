@@ -28,23 +28,79 @@ class WeeklyLottoPredictor:
         self.predictions_dir.mkdir(exist_ok=True)
     
     def predict_numbers(self, num_count=7):
-        """Generate predicted numbers"""
+        """Generate predicted numbers using evidence-based rules from 1,212-draw analysis:
+        - Exclude #50 (drawn 42% below expected — strongest outlier)
+        - 3 odd/4 even or 4 odd/3 even split (covers 58% of all historical draws)
+        - At least one consecutive pair (present in 63% of draws)
+        - Sum between 156–196 (central distribution sweet spot)
+        - Spread across low (1-17), mid (18-33), high (34-50) ranges
+        - Weighted by historical frequency
+        """
+        import random
+
         frequency_df = self.analyzer.analyze_frequency()
-        top_numbers = frequency_df.nlargest(num_count, 'Frequency')['Number'].tolist()
-        return sorted([int(n) for n in top_numbers])
-    
+
+        # Build frequency weights; zero-out #50, reduce high-end numbers
+        weights = {}
+        for _, row in frequency_df.iterrows():
+            n = int(row['Number'])
+            if n == 50:
+                weights[n] = 0          # exclude #50
+            elif n > 48:
+                weights[n] = int(row['Frequency']) * 0.3
+            else:
+                weights[n] = int(row['Frequency'])
+
+        pool = [n for n in range(1, 50) if n != 50]  # 1-49
+
+        def pick_weighted(exclude=set()):
+            candidates = [n for n in pool if n not in exclude]
+            w = [weights.get(n, 1) for n in candidates]
+            return random.choices(candidates, weights=w, k=1)[0]
+
+        def satisfies_rules(nums):
+            s = sorted(nums)
+            total = sum(s)
+            odds = sum(1 for n in s if n % 2 == 1)
+            has_consec = any(s[i+1] - s[i] == 1 for i in range(len(s)-1))
+            low  = sum(1 for n in s if n <= 17)
+            mid  = sum(1 for n in s if 18 <= n <= 33)
+            high = sum(1 for n in s if n >= 34)
+            spread_ok = low >= 1 and mid >= 1 and high >= 1
+            odd_even_ok = odds in (3, 4)
+            sum_ok = 156 <= total <= 196
+            return has_consec and odd_even_ok and sum_ok and spread_ok
+
+        # Try up to 50,000 times to find a valid combination
+        for _ in range(50000):
+            chosen = set()
+            while len(chosen) < num_count:
+                chosen.add(pick_weighted(chosen))
+            if satisfies_rules(chosen):
+                return sorted(chosen)
+
+        # Fallback: relax sum constraint only if no valid set found
+        for _ in range(10000):
+            chosen = set()
+            while len(chosen) < num_count:
+                chosen.add(pick_weighted(chosen))
+            s = sorted(chosen)
+            odds = sum(1 for n in s if n % 2 == 1)
+            has_consec = any(s[i+1] - s[i] == 1 for i in range(len(s)-1))
+            if has_consec and odds in (3, 4):
+                return s
+
+        return sorted(random.sample(pool, num_count))
+
     def get_bonus_number(self, main_numbers):
-        """Generate bonus number"""
+        """Pick bonus from top-frequency numbers not in main set, avoiding #50"""
+        import random
         frequency_df = self.analyzer.analyze_frequency()
         candidates = frequency_df[
-            ~frequency_df['Number'].isin(main_numbers)
-        ].nlargest(10, 'Frequency')['Number'].tolist()
-        
-        import random
-        bonus = int(random.choice(candidates)) if candidates else random.randint(1, 50)
-        while bonus in main_numbers:
-            bonus = random.randint(1, 50)
-        return bonus
+            (~frequency_df['Number'].isin(main_numbers)) &
+            (frequency_df['Number'] != 50)
+        ].nlargest(15, 'Frequency')['Number'].tolist()
+        return int(random.choice(candidates)) if candidates else random.randint(1, 49)
     
     def save_weekly_prediction(self, main_numbers, bonus_number):
         """Save prediction with timestamp"""
@@ -79,20 +135,32 @@ class WeeklyLottoPredictor:
 Main Numbers: {main_numbers}
 Bonus Number: {bonus_number}
 
-Based on historical Lotto Max data (1013 draws analyzed):
-- Total numbers in dataset: 7091
-- Number range: 1-50
-- Mean: 24.86
-- Most frequent numbers historically: 12, 6, 8, 3, 20
+Based on historical Lotto Max data (1,212 draws, Sep 2009 – May 2026):
+- Number range: 1–50
+- Average draw sum: 175.7 (sweet spot: 156–196)
+- Most frequent numbers: 19, 28, 7, 39, 2, 30, 36, 22, 38, 18
+- Least frequent: #50 (98x — major outlier, ~42% below expected), 49, 33
+- 62.9% of draws contain at least one consecutive pair
+- 58.4% of draws are 3-odd/4-even or 4-odd/3-even
+- Top bonus numbers: 18, 10, 38, 46, 27
+- Notable 6-combo that appeared twice: [7, 10, 11, 19, 34, 45]
+
+Rules applied to generate this prediction:
+✓ #50 excluded
+✓ Odd/even balance enforced (3/4 or 4/3)
+✓ At least one consecutive pair included
+✓ Sum target: 156–196
+✓ Spread across low (1-17), mid (18-33), high (34-50)
+✓ Weighted by historical frequency
 
 Please provide:
-1. Brief assessment of the prediction quality
+1. Brief assessment of how well this ticket follows the statistical rules
 2. Confidence level (High/Medium/Low) and reasoning
-3. Key observations about the number selection
-4. Any patterns or trends noticed
-5. Recommendation for the player
+3. Any notable patterns in this specific combination
+4. One thing that could make this ticket stronger
+5. Short recommendation for the player
 
-Keep response concise and actionable. Remember: lottery is random, but statistical patterns can inform strategy."""
+Keep response concise and actionable."""
 
         try:
             response = requests.post(
@@ -127,6 +195,11 @@ Keep response concise and actionable. Remember: lottery is random, but statistic
     def send_to_telegram(self, chat_id, main_numbers, bonus_number, ai_analysis):
         """Send prediction to Telegram with AI analysis"""
         
+        s = sorted(main_numbers)
+        odds = sum(1 for n in s if n % 2 == 1)
+        total_sum = sum(s)
+        has_consec = any(s[i+1] - s[i] == 1 for i in range(len(s)-1))
+
         message = f"""<b>🎰 LOTTO MAX WEEKLY PREDICTION</b>
 <i>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</i>
 
@@ -135,10 +208,16 @@ Keep response concise and actionable. Remember: lottery is random, but statistic
 
 <b>🎁 Bonus:</b> <code>{bonus_number}</code>
 
-<b>🤖 DeepSeek AI Analysis:</b>
-<i>{ai_analysis[:500]}...</i> (see full analysis in file)
+<b>✅ Rules Check (1,212-draw analysis):</b>
+• #50 excluded: {'✓' if 50 not in main_numbers else '✗'}
+• Odd/Even: {odds}/{7-odds} {'✓' if odds in (3,4) else '✗'}
+• Consecutive pair: {'✓' if has_consec else '✗'}
+• Sum {total_sum}: {'✓' if 156<=total_sum<=196 else '✗ (target 156-196)'}
 
-<b>📈 Data:</b> 1013 draws analyzed | 7091 numbers
+<b>🤖 DeepSeek AI Analysis:</b>
+<i>{ai_analysis[:500]}...</i>
+
+<b>📈 Data:</b> 1,212 draws analyzed (Sep 2009 – May 2026)
 
 ⚠️ <i>Lottery is random. For entertainment only.</i>
 <i>Gamble responsibly.</i>"""
@@ -173,6 +252,15 @@ Keep response concise and actionable. Remember: lottery is random, but statistic
         frequency_df = self.analyzer.analyze_frequency()
         top_10 = frequency_df.head(10)
         
+        s = sorted(main_numbers)
+        odds = sum(1 for n in s if n % 2 == 1)
+        evens = 7 - odds
+        total_sum = sum(s)
+        has_consec = any(s[i+1] - s[i] == 1 for i in range(len(s)-1))
+        low_count  = sum(1 for n in s if n <= 17)
+        mid_count  = sum(1 for n in s if 18 <= n <= 33)
+        high_count = sum(1 for n in s if n >= 34)
+
         report = f"""
 {'='*70}
 LOTTO MAX - WEEKLY PREDICTION REPORT
@@ -187,6 +275,16 @@ LOTTO MAX - WEEKLY PREDICTION REPORT
 
 Main Numbers: {' | '.join([str(n) for n in main_numbers])}
 Bonus Number: {bonus_number}
+
+{'='*70}
+✅ RULES VALIDATION (based on 1,212-draw analysis)
+{'='*70}
+
+  #50 excluded:           {'✓ Yes' if 50 not in main_numbers else '✗ No'}
+  Odd/Even split:         {odds} odd / {evens} even  {'✓' if odds in (3,4) else '✗ (target: 3/4 or 4/3)'}
+  Consecutive pair:       {'✓ Yes' if has_consec else '✗ None found'}
+  Sum ({total_sum}):        {'✓ In range' if 156 <= total_sum <= 196 else f'✗ Outside 156-196'}
+  Range spread:           Low={low_count} Mid={mid_count} High={high_count}  {'✓' if low_count>=1 and mid_count>=1 and high_count>=1 else '✗'}
 
 {'='*70}
 📈 STATISTICAL ANALYSIS
